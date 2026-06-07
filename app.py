@@ -1,3 +1,4 @@
+from __future__ import annotations
 import sys
 from admin import is_admin, ask_elevation
 from filters import SortFilterProxyModel
@@ -26,7 +27,215 @@ import os
 from pathlib import Path
 from typing import Any
 
+from utils import parse_size
 from workers import DeleteWorker, ScanWorker
+
+
+def start_scan(main: MainWindow) -> None:
+    if main.scan_worker and main.scan_worker.isRunning():
+        return
+    main.source_model.removeRows(0, main.source_model.rowCount())
+    main.progress_bar.setVisible(False)  # Hide progress bar
+    main.status_label.setText("Scanning…")
+    main.size_info_label.setText("")  # Clear size info
+    main.delete_btn.setEnabled(False)  # Disable during scan
+    main.scan_btn.setEnabled(False)  # Disable scan button during scan
+    main.select_all_btn.setEnabled(False)  # Disable selection buttons during scan
+    main.deselect_all_btn.setEnabled(False)
+
+    appdata = os.environ.get("APPDATA")
+    local = os.environ.get("LOCALAPPDATA")
+
+    bases = [
+        Path(appdata) if appdata else None,
+        Path(local) if local else None,
+        Path(local.replace("Local", "LocalLow")) if local else None,
+    ]
+    bases = [b for b in bases if b and os.path.exists(b)]
+    max_depth = main.depth_slider.value()
+    main.scan_worker = ScanWorker(bases, max_depth)
+
+    def add_label(n: int) -> None:
+        main.status_label.setText(f"Found {n} folders")
+
+    def add_scanning(n: str) -> None:
+        main.status_label.setText(f"Scanning: {n}")
+
+    main.scan_worker.progress.connect(add_label)
+    main.scan_worker.current_path.connect(add_scanning)
+    main.scan_worker.folder_found.connect(main.add_folder_to_table)
+    main.scan_worker.finished.connect(main.scan_finished)
+    main.scan_worker.start()
+
+
+def select_all(main: MainWindow) -> None:
+    for row in range(main.source_model.rowCount()):
+        main.source_model.item(row, 0).setCheckState(Qt.CheckState.Checked)
+
+
+def deselect_all(main: MainWindow) -> None:
+    for row in range(main.source_model.rowCount()):
+        main.source_model.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
+
+
+def start_delete(main: MainWindow) -> None:
+    paths_to_delete: list[Path] = []
+    for row in range(main.source_model.rowCount()):
+        if main.source_model.item(row, 0).checkState() == Qt.CheckState.Checked:
+            paths_to_delete.append(Path(main.source_model.item(row, 1).text()))
+
+    if not paths_to_delete:
+        return
+
+    reply = QMessageBox.question(
+        main,
+        "Confirm Deletion",
+        f"This will permanently delete {len(paths_to_delete)} folders. Continue?",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+    )
+    if reply != QMessageBox.StandardButton.Yes:
+        return
+
+    main.delete_btn.setEnabled(False)
+    main.progress_bar.setVisible(True)
+    main.progress_bar.setRange(0, len(paths_to_delete))
+    main.status_label.setText("Deleting…")
+
+    main.delete_worker = DeleteWorker(paths_to_delete)
+    main.delete_worker.progress.connect(main.progress_bar.setValue)
+    main.delete_worker.finished.connect(main.deletion_finished)
+    main.delete_worker.start()
+
+
+def update_totals(main: MainWindow, *_: Any) -> None:
+    total_found = 0
+    total_selected = 0
+    selected_count = 0
+
+    for row in range(main.source_model.rowCount()):
+        size_item = main.source_model.item(row, 2)
+        # Get the raw size in bytes from UserRole data
+        size_bytes = size_item.data(Qt.ItemDataRole.UserRole)
+        if size_bytes is None:
+            # Fallback to parsing the displayed text if no UserRole data
+            size_bytes = parse_size(size_item.text())
+
+        total_found += size_bytes
+        if main.source_model.item(row, 0).checkState() == Qt.CheckState.Checked:
+            total_selected += size_bytes
+            selected_count += 1
+
+    found_h = naturalsize(total_found, binary=True)
+    selected_h = naturalsize(total_selected, binary=True)
+
+    # Update status
+    row_count = main.source_model.rowCount()
+    if row_count > 0:
+        main.status_label.setText(f"Found {row_count} folders")
+        main.size_info_label.setText(f"[{selected_h} / {found_h}]")
+    else:
+        main.status_label.setText("Ready")
+        main.size_info_label.setText("")
+
+    # Enable delete button if something is selected
+    main.delete_btn.setEnabled(total_selected > 0 and selected_count > 0)
+
+
+class ScanButton(QPushButton):
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setStyleSheet("QPushButton { background-color: #007ACC; color: white; }")
+
+
+class SelectAllButton(QPushButton):
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setStyleSheet("QPushButton { background-color: #28A745; color: white; }")
+
+
+class DeselectAllButton(QPushButton):
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setStyleSheet("QPushButton { background-color: #DC3545; color: white; }")
+
+
+class DeleteButton(QPushButton):
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self.setStyleSheet("QPushButton { background-color: #DC3545; color: white; }")
+        self.setEnabled(False)  # Initially disabled until something is selected
+
+
+class DepthSlider(QSlider):
+    def __init__(self, depth_label: QLabel, parent: QWidget | None = None) -> None:
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self.setMinimum(0)
+        self.setMaximum(10)
+        self.setValue(3)
+        self.setFixedWidth(100)
+        self.depth_label = depth_label
+        self.valueChanged.connect(self.on_value_changed)
+
+    def on_value_changed(self, value: int) -> None:
+        if value == 0:
+            self.depth_label.setText("Depth: ∞")
+        else:
+            self.depth_label.setText(f"Depth: {value}")
+
+
+class TableView(QTableView):
+    def __init__(
+        self, proxy_model: SortFilterProxyModel, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+
+        self.setModel(proxy_model)
+        self.setSortingEnabled(True)
+        self.setColumnWidth(0, 40)
+        self.setColumnWidth(2, 100)  # Size column
+        self.horizontalHeader().setStretchLastSection(False)
+        self.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )  # Path column
+        self.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+
+        # Sort by size (column 2) in descending order by default
+        self.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+
+
+class TopLayout(QHBoxLayout):
+    def __init__(
+        self,
+        *items: QWidget,
+    ) -> None:
+        super().__init__()
+        for item in items:
+            self.addWidget(item)
+        self.addStretch()  # Push items to the left
+
+
+class BottomLayout(QHBoxLayout):
+    def __init__(
+        self,
+        *items: QWidget,
+    ) -> None:
+        super().__init__()
+        for item in items:
+            self.addWidget(item)
+        self.addStretch()  # Push items to the left
+
+
+class MainLayout(QVBoxLayout):
+    def __init__(
+        self,
+        top_layout: TopLayout,
+        table: TableView,
+        bottom_layout: BottomLayout,
+    ) -> None:
+        super().__init__()
+        self.addLayout(top_layout)
+        self.addWidget(table)
+        self.addLayout(bottom_layout)
 
 
 class MainWindow(QMainWindow):
@@ -36,20 +245,14 @@ class MainWindow(QMainWindow):
         self.resize(900, 600)
 
         # UI Elements
-        self.scan_btn = QPushButton("Scan")
-        self.select_all_btn = QPushButton("Select All")
-        self.deselect_all_btn = QPushButton("Deselect All")
-        self.delete_btn = QPushButton("Delete Selected")
-        self.delete_btn.setStyleSheet("QPushButton { background:red; color:white; }")
-        self.delete_btn.setEnabled(False)
+        self.scan_btn = ScanButton("Scan")
+        self.select_all_btn = SelectAllButton("Select All")
+        self.deselect_all_btn = DeselectAllButton("Deselect All")
+        self.delete_btn = DeleteButton("Delete Selected")
 
         # Depth slider
         self.depth_label = QLabel("Depth: 3")
-        self.depth_slider = QSlider(Qt.Orientation.Horizontal)
-        self.depth_slider.setMinimum(0)
-        self.depth_slider.setMaximum(10)
-        self.depth_slider.setValue(3)
-        self.depth_slider.setFixedWidth(100)
+        self.depth_slider = DepthSlider(depth_label=self.depth_label)
         self.depth_slider.valueChanged.connect(self.update_depth_label)
 
         # Size info label
@@ -58,7 +261,6 @@ class MainWindow(QMainWindow):
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
 
-        self.table = QTableView()
         self.source_model = QStandardItemModel(0, 3)
         self.source_model.setHorizontalHeaderLabels(["✔", "Path", "Size"])
 
@@ -66,41 +268,27 @@ class MainWindow(QMainWindow):
         self.proxy_model = SortFilterProxyModel()
         self.proxy_model.setSourceModel(self.source_model)
 
-        self.table.setModel(self.proxy_model)
-        self.table.setSortingEnabled(True)
-        self.table.setColumnWidth(0, 40)
-        self.table.setColumnWidth(2, 100)  # Size column
-        self.table.horizontalHeader().setStretchLastSection(False)
-        self.table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Stretch
-        )  # Path column
-        self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
-
-        # Sort by size (column 2) in descending order by default
-        self.table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
+        self.table = TableView(self.proxy_model)
 
         self.status_label = QLabel("Ready")
 
         # Layout
-        top_layout = QHBoxLayout()
-        top_layout.addWidget(self.scan_btn)
-        top_layout.addWidget(self.select_all_btn)
-        top_layout.addWidget(self.deselect_all_btn)
-        top_layout.addWidget(self.depth_label)
-        top_layout.addWidget(self.depth_slider)
-        top_layout.addStretch()
-        top_layout.addWidget(self.progress_bar)
+        top_layout = TopLayout(
+            self.scan_btn,
+            self.select_all_btn,
+            self.deselect_all_btn,
+            self.depth_label,
+            self.depth_slider,
+            self.progress_bar,
+        )
 
-        bottom_layout = QHBoxLayout()
-        bottom_layout.addWidget(self.status_label)
-        bottom_layout.addStretch()
-        bottom_layout.addWidget(self.size_info_label)
-        bottom_layout.addWidget(self.delete_btn)
+        bottom_layout = BottomLayout(
+            self.status_label, self.size_info_label, self.delete_btn
+        )
 
-        main_layout = QVBoxLayout()
-        main_layout.addLayout(top_layout)
-        main_layout.addWidget(self.table)
-        main_layout.addLayout(bottom_layout)
+        main_layout = MainLayout(
+            top_layout=top_layout, table=self.table, bottom_layout=bottom_layout
+        )
 
         container = QWidget()
         container.setLayout(main_layout)
@@ -125,41 +313,7 @@ class MainWindow(QMainWindow):
             self.depth_label.setText(f"Depth: {value}")
 
     # ---------- Scanning --------------------------------------------------
-    def start_scan(self) -> None:
-        if self.scan_worker and self.scan_worker.isRunning():
-            return
-        self.source_model.removeRows(0, self.source_model.rowCount())
-        self.progress_bar.setVisible(False)  # Hide progress bar
-        self.status_label.setText("Scanning…")
-        self.size_info_label.setText("")  # Clear size info
-        self.delete_btn.setEnabled(False)  # Disable during scan
-        self.scan_btn.setEnabled(False)  # Disable scan button during scan
-        self.select_all_btn.setEnabled(False)  # Disable selection buttons during scan
-        self.deselect_all_btn.setEnabled(False)
-
-        appdata = os.environ.get("APPDATA")
-        local = os.environ.get("LOCALAPPDATA")
-
-        bases = [
-            Path(appdata) if appdata else None,
-            Path(local) if local else None,
-            Path(local.replace("Local", "LocalLow")) if local else None,
-        ]
-        bases = [b for b in bases if b and os.path.exists(b)]
-        max_depth = self.depth_slider.value()
-        self.scan_worker = ScanWorker(bases, max_depth)
-
-        def add_label(n: int) -> None:
-            self.status_label.setText(f"Found {n} folders")
-
-        def add_scanning(n: str) -> None:
-            self.status_label.setText(f"Scanning: {n}")
-
-        self.scan_worker.progress.connect(add_label)
-        self.scan_worker.current_path.connect(add_scanning)
-        self.scan_worker.folder_found.connect(self.add_folder_to_table)
-        self.scan_worker.finished.connect(self.scan_finished)
-        self.scan_worker.start()
+    start_scan = start_scan
 
     def add_folder_to_table(
         self, path: Path, size_human: str, size_bytes_str: str
@@ -184,97 +338,12 @@ class MainWindow(QMainWindow):
         self.update_totals()  # Final update to enable delete button if something selected
 
     # ---------- Selection -------------------------------------------------
-    def select_all(self) -> None:
-        for row in range(self.source_model.rowCount()):
-            self.source_model.item(row, 0).setCheckState(Qt.CheckState.Checked)
-
-    def deselect_all(self) -> None:
-        for row in range(self.source_model.rowCount()):
-            self.source_model.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
-
-    def update_totals(self, *_: Any) -> None:
-        total_found = 0
-        total_selected = 0
-        selected_count = 0
-
-        for row in range(self.source_model.rowCount()):
-            size_item = self.source_model.item(row, 2)
-            # Get the raw size in bytes from UserRole data
-            size_bytes = size_item.data(Qt.ItemDataRole.UserRole)
-            if size_bytes is None:
-                # Fallback to parsing the displayed text if no UserRole data
-                size_bytes = self._parse_size(size_item.text())
-
-            total_found += size_bytes
-            if self.source_model.item(row, 0).checkState() == Qt.CheckState.Checked:
-                total_selected += size_bytes
-                selected_count += 1
-
-        found_h = naturalsize(total_found, binary=True)
-        selected_h = naturalsize(total_selected, binary=True)
-
-        # Update status
-        row_count = self.source_model.rowCount()
-        if row_count > 0:
-            self.status_label.setText(f"Found {row_count} folders")
-            self.size_info_label.setText(f"[{selected_h} / {found_h}]")
-        else:
-            self.status_label.setText("Ready")
-            self.size_info_label.setText("")
-
-        # Enable delete button if something is selected
-        self.delete_btn.setEnabled(total_selected > 0 and selected_count > 0)
-
-    def _parse_size(self, human: str) -> int:
-        try:
-            multipliers = {
-                "B": 1,
-                "Bytes": 1,
-                "KiB": 1024,
-                "MiB": 1024**2,
-                "GiB": 1024**3,
-                "TiB": 1024**4,
-                "kB": 1000,
-                "MB": 1000**2,
-                "GB": 1000**3,
-                "TB": 1000**4,
-            }
-            parts = human.split()
-            if len(parts) != 2:
-                return 0
-            number, unit = parts
-            return int(float(number) * multipliers.get(unit, 1))
-        except ValueError, KeyError, IndexError:
-            return 0
+    select_all = select_all
+    deselect_all = deselect_all
+    update_totals = update_totals
 
     # ---------- Deleting --------------------------------------------------
-    def start_delete(self) -> None:
-        paths_to_delete: list[Path] = []
-        for row in range(self.source_model.rowCount()):
-            if self.source_model.item(row, 0).checkState() == Qt.CheckState.Checked:
-                paths_to_delete.append(Path(self.source_model.item(row, 1).text()))
-
-        if not paths_to_delete:
-            return
-
-        reply = QMessageBox.question(
-            self,
-            "Confirm Deletion",
-            f"This will permanently delete {len(paths_to_delete)} folders. Continue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        self.delete_btn.setEnabled(False)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, len(paths_to_delete))
-        self.status_label.setText("Deleting…")
-
-        self.delete_worker = DeleteWorker(paths_to_delete)
-        self.delete_worker.progress.connect(self.progress_bar.setValue)
-        self.delete_worker.finished.connect(self.deletion_finished)
-        self.delete_worker.start()
+    start_delete = start_delete
 
     def deletion_finished(self) -> None:
         QMessageBox.information(self, "Done", "Selected folders have been deleted.")
