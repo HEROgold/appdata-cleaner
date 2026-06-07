@@ -17,9 +17,8 @@ Download the latest release from: https://github.com/Hermesiss/appdata-cleaner/r
 
 ## Usage
 
-1. Run as Administrator
-2. Click "Scan" to find junk folders
-3. Select folders you want to delete
-4. Click "Delete Selected"
+For python devs:
+
+1. run `uv run appdata_cleaner.py`
 
 ⚠️ **Warning**: This tool permanently deletes folders. Use with caution.
