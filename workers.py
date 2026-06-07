@@ -1,16 +1,15 @@
-import os
 from threading import Event
 
 from PySide6.QtCore import QThread, Signal
 
 
-import shutil
 from pathlib import Path
 from typing import override
 
 from config import Settings
 
 from humanize import naturalsize
+from herogold.loops import parallel
 
 
 class DeleteWorker(QThread):
@@ -24,12 +23,11 @@ class DeleteWorker(QThread):
 
     @override
     def run(self) -> None:
-        for idx, p in enumerate(self.paths, 1):
-            try:
-                shutil.rmtree(p, ignore_errors=True)
-            except Exception:
-                pass
-            self.progress.emit(idx)
+        """Deletes the given paths in parallel, emitting progress updates."""
+        # Issue, sometimes some items may not be removed
+        # Permissions or WinErrors, these are ignored for now. We may want to catch and report them later.
+        for index, _ in enumerate(parallel(Path.unlink, self.paths), 1):
+            self.progress.emit(index)
         self.finished.emit()
 
 
@@ -55,11 +53,12 @@ class ScanWorker(QThread):
         for base in self.base_paths:
             if self._stop_event.is_set():
                 break
-            self._scan_path(Path(base), 0)
+            self._scan_path(base, 0)
         self.finished.emit(self.results_count)
 
     def _scan_path(self, path: Path, depth: int) -> None:
-        if (self.max_depth > 0 and depth > self.max_depth) or self._stop_event.is_set():
+        """Recursively scans the given path for folders matching keywords, emitting progress and results."""
+        if (0 < depth <= self.max_depth) or self._stop_event.is_set():
             return
         try:
             self.current_path.emit(str(path))
@@ -84,15 +83,4 @@ class ScanWorker(QThread):
             pass
 
     def _dir_size(self, directory: Path) -> int:
-        total = 0
-        try:
-            for root, _, files in os.walk(directory, topdown=True):
-                for f in files:
-                    try:
-                        fp = Path(root) / f
-                        total += fp.stat().st_size
-                    except OSError, PermissionError:
-                        pass
-        except OSError, PermissionError:
-            pass
-        return total
+        return sum(f.stat().st_size for f in directory.rglob("*") if f.is_file())
