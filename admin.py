@@ -28,6 +28,8 @@ def show_admin_error() -> None:
 
 
 def ask_elevation() -> None:
+    # TODO: This works, however
+    # this breaks debuggers and closes the original process.
     ctypes.windll.shell32.ShellExecuteW(
         None, "runas", sys.executable, " ".join(sys.argv), None, 1
     )
