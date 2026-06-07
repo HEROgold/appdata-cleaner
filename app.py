@@ -37,6 +37,7 @@ from workers import DeleteWorker, ScanWorker
 
 
 def start_scan(main: MainWindow) -> None:
+    """Start the scanning process in a background thread."""
     if main.scan_worker and main.scan_worker.isRunning():
         return
     main.source_model.removeRows(0, main.source_model.rowCount())
