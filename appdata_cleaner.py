@@ -405,6 +405,13 @@ def is_admin():
         return False
 
 
+def ask_elevation() -> None:
+    ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", sys.executable, " ".join(sys.argv), None, 1
+    )
+    sys.exit(0)
+
+
 def show_admin_error() -> None:
     """Show admin error with fallback methods"""
     # Try to create QApplication first if it doesn't exist
@@ -441,8 +448,7 @@ if __name__ == "__main__":
         )
 
     if sys.platform.startswith("win") and not admin_status:
-        show_admin_error()
-        sys.exit(1)
+        ask_elevation()
 
     app = QApplication(sys.argv)
     window = MainWindow()
