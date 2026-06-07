@@ -63,37 +63,54 @@ def start_scan(main: MainWindow) -> None:
 
     main.scan_worker.progress.connect(add_label)
     main.scan_worker.current_path.connect(add_scanning)
-    main.scan_worker.folder_found.connect(main.add_folder_to_table)
+    main.scan_worker.folder_found.connect(main.add_table_row)
     main.scan_worker.finished.connect(main.scan_finished)
     main.scan_worker.start()
 
 
-def select_all(main: MainWindow) -> None:
+def set_state_all(main: MainWindow, state: Qt.CheckState) -> None:
     for row in range(main.source_model.rowCount()):
-        main.source_model.item(row, 0).setCheckState(Qt.CheckState.Checked)
+        main.source_model.item(row, 0).setCheckState(state)
+
+
+def select_all(main: MainWindow) -> None:
+    set_state_all(main, Qt.CheckState.Checked)
 
 
 def deselect_all(main: MainWindow) -> None:
-    for row in range(main.source_model.rowCount()):
-        main.source_model.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
+    set_state_all(main, Qt.CheckState.Unchecked)
+
+
+def confirm(main: MainWindow, title: str, message: str) -> bool:
+    """Show a confirmation dialog and return True if user confirms."""
+    return (
+        QMessageBox.question(
+            main,
+            title,
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        == QMessageBox.StandardButton.Yes
+    )
+
+
+def confirm_deletion(main: MainWindow, count: int) -> bool:
+    """Show a confirmation dialog before deletion."""
+    return confirm(
+        main,
+        "Confirm Deletion",
+        f"Are you sure you want to delete {count} selected folder(s)? This action cannot be undone.",
+    )
 
 
 def start_delete(main: MainWindow) -> None:
-    paths_to_delete: list[Path] = []
-    for row in range(main.source_model.rowCount()):
-        if main.source_model.item(row, 0).checkState() == Qt.CheckState.Checked:
-            paths_to_delete.append(Path(main.source_model.item(row, 1).text()))
+    paths_to_delete: list[Path] = [
+        Path(main.source_model.item(row, 1).text())
+        for row in range(main.source_model.rowCount())
+        if main.source_model.item(row, 0).checkState() == Qt.CheckState.Checked
+    ]
 
-    if not paths_to_delete:
-        return
-
-    reply = QMessageBox.question(
-        main,
-        "Confirm Deletion",
-        f"This will permanently delete {len(paths_to_delete)} folders. Continue?",
-        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-    )
-    if reply != QMessageBox.StandardButton.Yes:
+    if not confirm_deletion(main, len(paths_to_delete)):
         return
 
     main.delete_btn.setEnabled(False)
@@ -211,7 +228,6 @@ class TopLayout(QHBoxLayout):
         super().__init__()
         for item in items:
             self.addWidget(item)
-        self.addStretch()  # Push items to the left
 
 
 class BottomLayout(QHBoxLayout):
@@ -222,7 +238,6 @@ class BottomLayout(QHBoxLayout):
         super().__init__()
         for item in items:
             self.addWidget(item)
-        self.addStretch()  # Push items to the left
 
 
 class MainLayout(QVBoxLayout):
@@ -273,22 +288,9 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("Ready")
 
         # Layout
-        top_layout = TopLayout(
-            self.scan_btn,
-            self.select_all_btn,
-            self.deselect_all_btn,
-            self.depth_label,
-            self.depth_slider,
-            self.progress_bar,
-        )
-
-        bottom_layout = BottomLayout(
-            self.status_label, self.size_info_label, self.delete_btn
-        )
-
-        main_layout = MainLayout(
-            top_layout=top_layout, table=self.table, bottom_layout=bottom_layout
-        )
+        top_layout = self.add_top_layout()
+        bottom_layout = self.add_bottom_layout()
+        main_layout = self.add_main_layout(top_layout, bottom_layout)
 
         container = QWidget()
         container.setLayout(main_layout)
@@ -304,6 +306,34 @@ class MainWindow(QMainWindow):
         self.scan_worker: ScanWorker | None = None
         self.delete_worker: DeleteWorker | None = None
 
+    def add_main_layout(
+        self, top_layout: TopLayout, bottom_layout: BottomLayout
+    ) -> MainLayout:
+        main_layout = MainLayout(
+            top_layout=top_layout, table=self.table, bottom_layout=bottom_layout
+        )
+
+        return main_layout
+
+    def add_top_layout(self) -> TopLayout:
+        top_layout = TopLayout(
+            self.scan_btn,
+            self.select_all_btn,
+            self.deselect_all_btn,
+            self.depth_label,
+            self.depth_slider,
+        )
+        top_layout.addStretch()  # Push buttons to the left
+        top_layout.addWidget(self.progress_bar)
+        return top_layout
+
+    def add_bottom_layout(self) -> BottomLayout:
+        bottom_layout = BottomLayout(self.status_label)
+        bottom_layout.addStretch()  # Push status to the left
+        bottom_layout.addWidget(self.size_info_label)
+        bottom_layout.addWidget(self.delete_btn)
+        return bottom_layout
+
         # No initial scan - user will click button when ready
 
     def update_depth_label(self, value: int) -> None:
@@ -315,9 +345,8 @@ class MainWindow(QMainWindow):
     # ---------- Scanning --------------------------------------------------
     start_scan = start_scan
 
-    def add_folder_to_table(
-        self, path: Path, size_human: str, size_bytes_str: str
-    ) -> None:
+    def add_table_row(self, path: Path, size_human: str, size_bytes_str: str) -> None:
+        """Add a new row to the table with the given path and size information."""
         checkbox_item = QStandardItem()
         checkbox_item.setCheckable(True)
         checkbox_item.setEditable(False)
@@ -337,12 +366,9 @@ class MainWindow(QMainWindow):
         self.table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
         self.update_totals()  # Final update to enable delete button if something selected
 
-    # ---------- Selection -------------------------------------------------
     select_all = select_all
     deselect_all = deselect_all
     update_totals = update_totals
-
-    # ---------- Deleting --------------------------------------------------
     start_delete = start_delete
 
     def deletion_finished(self) -> None:
