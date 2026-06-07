@@ -13,11 +13,15 @@ import subprocess
 from pathlib import Path
 
 
-def run_command(cmd: str, check=True) -> CalledProcessError | CompletedProcess[str]:
+def run_command(
+    cmd: str, check: bool = True
+) -> CalledProcessError | CompletedProcess[str]:
     """Run a command and return the result"""
     print(f"Running: {cmd}")
     try:
-        result = subprocess.run(cmd, shell=True, check=check, capture_output=True, text=True)
+        result = subprocess.run(
+            cmd, shell=True, check=check, capture_output=True, text=True
+        )
         if result.stdout:
             print(result.stdout)
         return result
@@ -65,10 +69,10 @@ def build_executable() -> bool:
     # Basic PyInstaller command
     cmd_parts = [
         "pyinstaller",
-        "--onefile",           # Single executable file
-        "--windowed",          # No console window
+        "--onefile",  # Single executable file
+        "--windowed",  # No console window
         "--name AppDataCleaner",  # Executable name
-        "--clean",             # Clean cache
+        "--clean",  # Clean cache
     ]
 
     # Add icon if exists
@@ -84,20 +88,14 @@ def build_executable() -> bool:
         "PySide6.QtCore",
         "PySide6.QtGui",
         "PySide6.QtWidgets",
-        "humanize"
+        "humanize",
     ]
 
     for imp in hidden_imports:
         cmd_parts.append(f"--hidden-import={imp}")
 
     # Exclude unnecessary modules to reduce size
-    excludes = [
-        "tkinter",
-        "matplotlib",
-        "numpy",
-        "scipy",
-        "pandas"
-    ]
+    excludes = ["tkinter", "matplotlib", "numpy", "scipy", "pandas"]
 
     for exc in excludes:
         cmd_parts.append(f"--exclude-module={exc}")
@@ -138,7 +136,9 @@ def main() -> None:
             print("\n" + "=" * 50)
             print("✅ Build completed successfully!")
             print(f"📁 Executable: {os.path.abspath('dist/AppDataCleaner.exe')}")
-            print(f"📦 Size: {os.path.getsize('dist/AppDataCleaner.exe') / (1024*1024):.1f} MB")
+            print(
+                f"📦 Size: {os.path.getsize('dist/AppDataCleaner.exe') / (1024 * 1024):.1f} MB"
+            )
             print("=" * 50)
 
             # Optional: Open dist folder

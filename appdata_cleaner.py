@@ -1,6 +1,7 @@
 # AppData Cleaner GUI
 # Requires: PySide6 (or install PyQt5 and adjust imports accordingly)
 
+from typing import override, Any
 import os
 import sys
 import shutil
@@ -9,7 +10,14 @@ from pathlib import Path
 from threading import Event
 from humanize import naturalsize  # pip install humanize
 
-from PySide6.QtCore import Qt, QThread, Signal, QSortFilterProxyModel
+from PySide6.QtCore import (
+    Qt,
+    QThread,
+    Signal,
+    QSortFilterProxyModel,
+    QModelIndex,
+    QPersistentModelIndex,
+)
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QHeaderView
 from PySide6.QtWidgets import (
@@ -29,14 +37,16 @@ from PySide6.QtWidgets import (
 # --- Settings -------------------------------------------------------------
 KEYWORDS = {"cache", "temp", "crash", "report", "dump", "crashes", "pending"}
 
+
 # -------------------------------------------------------------------------
 class ScanWorker(QThread):
     progress = Signal(int)
     current_path = Signal(str)
     folder_found = Signal(str, str, str)  # path, size_human, size_bytes_str
+    # pyrefly: ignore [missing-override-decorator]
     finished = Signal(int)  # total count
 
-    def __init__(self, base_paths, max_depth) -> None:
+    def __init__(self, base_paths: list[Path], max_depth: int) -> None:
         super().__init__()
         self.base_paths = base_paths
         self.max_depth = max_depth
@@ -45,6 +55,7 @@ class ScanWorker(QThread):
     def stop(self) -> None:
         self._stop_event.set()
 
+    @override
     def run(self) -> None:
         self.results_count = 0
         for base in self.base_paths:
@@ -86,33 +97,41 @@ class ScanWorker(QThread):
                     try:
                         fp = Path(root) / f
                         total += fp.stat().st_size
-                    except (OSError, PermissionError):
+                    except OSError, PermissionError:
                         pass
-        except (OSError, PermissionError):
+        except OSError, PermissionError:
             pass
         return total
 
 
 class SortFilterProxyModel(QSortFilterProxyModel):
-    def lessThan(self, left, right):
+    @override
+    def lessThan(
+        self,
+        source_left: QModelIndex | QPersistentModelIndex,
+        source_right: QModelIndex | QPersistentModelIndex,
+        /,
+    ) -> bool:
         # Special handling for the Size column (column 2)
-        if left.column() == 2:
-            left_data = self.sourceModel().data(left, Qt.UserRole)
-            right_data = self.sourceModel().data(right, Qt.UserRole)
+        if source_left.column() == 2:
+            left_data = self.sourceModel().data(source_left, Qt.ItemDataRole.UserRole)
+            right_data = self.sourceModel().data(source_right, Qt.ItemDataRole.UserRole)
             if left_data is not None and right_data is not None:
                 return left_data < right_data
         # Default string comparison for other columns
-        return super().lessThan(left, right)
+        return super().lessThan(source_left, source_right)
 
 
 class DeleteWorker(QThread):
     progress = Signal(int)
+    # pyrefly: ignore [missing-override-decorator]
     finished = Signal()
 
-    def __init__(self, paths) -> None:
+    def __init__(self, paths: list[Path]) -> None:
         super().__init__()
         self.paths = paths
 
+    @override
     def run(self) -> None:
         for idx, p in enumerate(self.paths, 1):
             try:
@@ -139,7 +158,7 @@ class MainWindow(QMainWindow):
 
         # Depth slider
         self.depth_label = QLabel("Depth: 3")
-        self.depth_slider = QSlider(Qt.Horizontal)
+        self.depth_slider = QSlider(Qt.Orientation.Horizontal)
         self.depth_slider.setMinimum(0)
         self.depth_slider.setMaximum(10)
         self.depth_slider.setValue(3)
@@ -165,11 +184,13 @@ class MainWindow(QMainWindow):
         self.table.setColumnWidth(0, 40)
         self.table.setColumnWidth(2, 100)  # Size column
         self.table.horizontalHeader().setStretchLastSection(False)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # Path column
-        self.table.setSelectionBehavior(QTableView.SelectRows)
+        self.table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )  # Path column
+        self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
 
         # Sort by size (column 2) in descending order by default
-        self.table.sortByColumn(2, Qt.DescendingOrder)
+        self.table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
 
         self.status_label = QLabel("Ready")
 
@@ -205,12 +226,12 @@ class MainWindow(QMainWindow):
         self.delete_btn.clicked.connect(self.start_delete)
         self.source_model.itemChanged.connect(self.update_totals)
 
-        self.scan_worker = None
-        self.delete_worker = None
+        self.scan_worker: ScanWorker | None = None
+        self.delete_worker: DeleteWorker | None = None
 
         # No initial scan - user will click button when ready
 
-    def update_depth_label(self, value) -> None:
+    def update_depth_label(self, value: int) -> None:
         if value == 0:
             self.depth_label.setText("Depth: ∞")
         else:
@@ -229,50 +250,62 @@ class MainWindow(QMainWindow):
         self.select_all_btn.setEnabled(False)  # Disable selection buttons during scan
         self.deselect_all_btn.setEnabled(False)
 
+        appdata = os.environ.get("APPDATA")
+        local = os.environ.get("LOCALAPPDATA")
+
         bases = [
-            os.environ.get("APPDATA"),
-            os.environ.get("LOCALAPPDATA"),
-            os.environ.get("LOCALAPPDATA").replace("Local", "LocalLow") if os.environ.get("LOCALAPPDATA") else None,
+            Path(appdata) if appdata else None,
+            Path(local) if local else None,
+            Path(local.replace("Local", "LocalLow")) if local else None,
         ]
         bases = [b for b in bases if b and os.path.exists(b)]
         max_depth = self.depth_slider.value()
         self.scan_worker = ScanWorker(bases, max_depth)
-        self.scan_worker.progress.connect(lambda n: self.status_label.setText(f"Found {n} folders"))
-        self.scan_worker.current_path.connect(lambda path: self.status_label.setText(f"Scanning: {path}"))
+
+        def add_label(n: int) -> None:
+            self.status_label.setText(f"Found {n} folders")
+
+        def add_scanning(n: str) -> None:
+            self.status_label.setText(f"Scanning: {n}")
+
+        self.scan_worker.progress.connect(add_label)
+        self.scan_worker.current_path.connect(add_scanning)
         self.scan_worker.folder_found.connect(self.add_folder_to_table)
         self.scan_worker.finished.connect(self.scan_finished)
         self.scan_worker.start()
 
-    def add_folder_to_table(self, path, size_human, size_bytes_str) -> None:
+    def add_folder_to_table(
+        self, path: Path, size_human: str, size_bytes_str: str
+    ) -> None:
         checkbox_item = QStandardItem()
         checkbox_item.setCheckable(True)
         checkbox_item.setEditable(False)
-        path_item = QStandardItem(path)
+        path_item = QStandardItem(str(path))
         size_item = QStandardItem(size_human)
         # Store the raw size in bytes as user data for calculations
-        size_item.setData(int(size_bytes_str), Qt.UserRole)
+        size_item.setData(int(size_bytes_str), Qt.ItemDataRole.UserRole)
         self.source_model.appendRow([checkbox_item, path_item, size_item])
         self.update_totals()
 
-    def scan_finished(self, total_count) -> None:
+    def scan_finished(self, total_count: int) -> None:
         self.status_label.setText(f"Scan completed. Found {total_count} folders")
         self.scan_btn.setEnabled(True)  # Re-enable scan button
         self.select_all_btn.setEnabled(True)  # Re-enable selection buttons
         self.deselect_all_btn.setEnabled(True)
         # Sort by size in descending order after scan completion
-        self.table.sortByColumn(2, Qt.DescendingOrder)
+        self.table.sortByColumn(2, Qt.SortOrder.DescendingOrder)
         self.update_totals()  # Final update to enable delete button if something selected
 
     # ---------- Selection -------------------------------------------------
     def select_all(self) -> None:
         for row in range(self.source_model.rowCount()):
-            self.source_model.item(row, 0).setCheckState(Qt.Checked)
+            self.source_model.item(row, 0).setCheckState(Qt.CheckState.Checked)
 
     def deselect_all(self) -> None:
         for row in range(self.source_model.rowCount()):
-            self.source_model.item(row, 0).setCheckState(Qt.Unchecked)
+            self.source_model.item(row, 0).setCheckState(Qt.CheckState.Unchecked)
 
-    def update_totals(self, *_) -> None:
+    def update_totals(self, *_: Any) -> None:
         total_found = 0
         total_selected = 0
         selected_count = 0
@@ -280,13 +313,13 @@ class MainWindow(QMainWindow):
         for row in range(self.source_model.rowCount()):
             size_item = self.source_model.item(row, 2)
             # Get the raw size in bytes from UserRole data
-            size_bytes = size_item.data(Qt.UserRole)
+            size_bytes = size_item.data(Qt.ItemDataRole.UserRole)
             if size_bytes is None:
                 # Fallback to parsing the displayed text if no UserRole data
                 size_bytes = self._parse_size(size_item.text())
 
             total_found += size_bytes
-            if self.source_model.item(row, 0).checkState() == Qt.Checked:
+            if self.source_model.item(row, 0).checkState() == Qt.CheckState.Checked:
                 total_selected += size_bytes
                 selected_count += 1
 
@@ -317,22 +350,22 @@ class MainWindow(QMainWindow):
                 "kB": 1000,
                 "MB": 1000**2,
                 "GB": 1000**3,
-                "TB": 1000**4
+                "TB": 1000**4,
             }
             parts = human.split()
             if len(parts) != 2:
                 return 0
             number, unit = parts
             return int(float(number) * multipliers.get(unit, 1))
-        except (ValueError, KeyError, IndexError):
+        except ValueError, KeyError, IndexError:
             return 0
 
     # ---------- Deleting --------------------------------------------------
     def start_delete(self) -> None:
-        paths_to_delete = []
+        paths_to_delete: list[Path] = []
         for row in range(self.source_model.rowCount()):
-            if self.source_model.item(row, 0).checkState() == Qt.Checked:
-                paths_to_delete.append(self.source_model.item(row, 1).text())
+            if self.source_model.item(row, 0).checkState() == Qt.CheckState.Checked:
+                paths_to_delete.append(Path(self.source_model.item(row, 1).text()))
 
         if not paths_to_delete:
             return
@@ -364,11 +397,13 @@ class MainWindow(QMainWindow):
 
 # ----------------- Admin rights on Windows ------------------------------
 
+
 def is_admin():
     try:
         return ctypes.windll.shell32.IsUserAnAdmin()
     except Exception:
         return False
+
 
 def show_admin_error() -> None:
     """Show admin error with fallback methods"""
@@ -381,10 +416,13 @@ def show_admin_error() -> None:
     msg = QMessageBox()
     msg.setWindowTitle("Administrator Required")
     msg.setIcon(QMessageBox.Icon.Critical)
-    msg.setText("This application requires Administrator privileges to clean AppData folders.")
+    msg.setText(
+        "This application requires Administrator privileges to clean AppData folders."
+    )
     msg.setInformativeText("Please run as Administrator and try again.")
     msg.setStandardButtons(QMessageBox.StandardButton.Ok)
     msg.exec()
+
 
 if __name__ == "__main__":
     # Debug info for admin check
@@ -394,10 +432,13 @@ if __name__ == "__main__":
     debug_mode = "--debug" in sys.argv
     if debug_mode:
         app = QApplication(sys.argv)
-        QMessageBox.information(None, "Debug Info",
-                               f"Platform: {sys.platform}\n"
-                               f"Admin Status: {admin_status}\n"
-                               f"Will show admin error: {sys.platform.startswith('win') and not admin_status}")
+        QMessageBox.information(
+            None,
+            "Debug Info",
+            f"Platform: {sys.platform}\n"
+            f"Admin Status: {admin_status}\n"
+            f"Will show admin error: {sys.platform.startswith('win') and not admin_status}",
+        )
 
     if sys.platform.startswith("win") and not admin_status:
         show_admin_error()
