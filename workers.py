@@ -1,3 +1,4 @@
+from collections.abc import Generator
 from threading import Event
 
 from PySide6.QtCore import QThread, Signal
@@ -49,38 +50,42 @@ class ScanWorker(QThread):
 
     @override
     def run(self) -> None:
-        self.results_count = 0
-        for base in self.base_paths:
-            if self._stop_event.is_set():
-                break
-            self._scan_path(base, 0)
-        self.finished.emit(self.results_count)
+        """Scans the base paths in parallel, emitting progress and results."""
+        count: int = 0
+        for results in parallel(scan_path, self.base_paths):
+            self.process_results(results)
+        self.finished.emit(count)
 
-    def _scan_path(self, path: Path, depth: int) -> None:
-        """Recursively scans the given path for folders matching keywords, emitting progress and results."""
-        if (0 < depth <= self.max_depth) or self._stop_event.is_set():
-            return
-        try:
-            self.current_path.emit(str(path))
-            for entry in path.iterdir():
-                if not entry.is_dir():
-                    continue
-                name = entry.name.lower()
-                if any(kw in name for kw in Settings.KEYWORDS):
-                    size = self._dir_size(entry)
-                    # Skip folders with zero size
-                    if size == 0:
-                        continue
-                    self.results_count += 1
-                    size_human = naturalsize(size, binary=True)
-                    self.folder_found.emit(str(entry), size_human, str(size))
-                    self.progress.emit(self.results_count)
-                    # Do not descend further inside this folder
-                    continue
-                # Recurse deeper
-                self._scan_path(entry, depth + 1)
-        except PermissionError:
-            pass
+    def process_results(self, results: set[Path]) -> None:
+        """Processes the results from scanning a path, emitting folder_found signals for matches."""
+        for i in filter_results(results):
+            size = i.stat().st_size
+            size_human = naturalsize(size, binary=True)
+            self.folder_found.emit(str(i), size_human, str(size))
 
-    def _dir_size(self, directory: Path) -> int:
-        return sum(f.stat().st_size for f in directory.rglob("*") if f.is_file())
+
+def filter_results(results: set[Path]) -> Generator[Path, None, None]:
+    """Filters the scanned results for folders matching the keywords."""
+    for i in results:
+        if any(keyword in i.name.casefold() for keyword in Settings.KEYWORDS):
+            yield i
+
+
+def scan_path(path: Path, depth: int = 0) -> set[Path]:
+    """Scans a single path recursively for folders matching keywords."""
+    print(f"Scanning: {path}")
+    scanned: set[Path] = set()
+    if depth > Settings.MAX_DEPTH:
+        return scanned
+
+    try:
+        path.iterdir()  # Check if we can access the directory
+    except PermissionError, OSError:
+        return scanned
+
+    for i in path.iterdir():
+        if i.is_dir():
+            # Recursively scan subdirectories and include the current directory
+            scanned.update(scan_path(i, depth + 1))
+        scanned.add(i)
+    return scanned
