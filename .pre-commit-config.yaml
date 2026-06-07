@@ -19,6 +19,14 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      - id: ruff-format
+        name: uvx ruff format
+        entry: uvx ruff format .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       - id: pyrefly-infer
         name: uvx pyrefly infer
         entry: uvx pyrefly infer .
