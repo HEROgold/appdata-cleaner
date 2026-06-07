@@ -1,145 +1,32 @@
-# AppData Cleaner GUI
-# Requires: PySide6 (or install PyQt5 and adjust imports accordingly)
-
-from typing import override, Any
-import os
 import sys
-import shutil
-import ctypes
-from pathlib import Path
-from threading import Event
-from humanize import naturalsize  # pip install humanize
+from admin import is_admin, ask_elevation
+from filters import SortFilterProxyModel
 
-from PySide6.QtCore import (
-    Qt,
-    QThread,
-    Signal,
-    QSortFilterProxyModel,
-    QModelIndex,
-    QPersistentModelIndex,
-)
+
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QStandardItem, QStandardItemModel
-from PySide6.QtWidgets import QHeaderView
 from PySide6.QtWidgets import (
-    QApplication,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMainWindow,
     QMessageBox,
-    QPushButton,
     QProgressBar,
+    QPushButton,
     QSlider,
     QTableView,
     QVBoxLayout,
     QWidget,
+    QApplication,
 )
-
-# --- Settings -------------------------------------------------------------
-KEYWORDS = {"cache", "temp", "crash", "report", "dump", "crashes", "pending"}
+from humanize import naturalsize
 
 
-# -------------------------------------------------------------------------
-class ScanWorker(QThread):
-    progress = Signal(int)
-    current_path = Signal(str)
-    folder_found = Signal(str, str, str)  # path, size_human, size_bytes_str
-    # pyrefly: ignore [missing-override-decorator]
-    finished = Signal(int)  # total count
+import os
+from pathlib import Path
+from typing import Any
 
-    def __init__(self, base_paths: list[Path], max_depth: int) -> None:
-        super().__init__()
-        self.base_paths = base_paths
-        self.max_depth = max_depth
-        self._stop_event = Event()
-
-    def stop(self) -> None:
-        self._stop_event.set()
-
-    @override
-    def run(self) -> None:
-        self.results_count = 0
-        for base in self.base_paths:
-            if self._stop_event.is_set():
-                break
-            self._scan_path(Path(base), 0)
-        self.finished.emit(self.results_count)
-
-    def _scan_path(self, path: Path, depth: int) -> None:
-        if (self.max_depth > 0 and depth > self.max_depth) or self._stop_event.is_set():
-            return
-        try:
-            self.current_path.emit(str(path))
-            for entry in path.iterdir():
-                if not entry.is_dir():
-                    continue
-                name = entry.name.lower()
-                if any(kw in name for kw in KEYWORDS):
-                    size = self._dir_size(entry)
-                    # Skip folders with zero size
-                    if size == 0:
-                        continue
-                    self.results_count += 1
-                    size_human = naturalsize(size, binary=True)
-                    self.folder_found.emit(str(entry), size_human, str(size))
-                    self.progress.emit(self.results_count)
-                    # Do not descend further inside this folder
-                    continue
-                # Recurse deeper
-                self._scan_path(entry, depth + 1)
-        except PermissionError:
-            pass
-
-    def _dir_size(self, directory: Path) -> int:
-        total = 0
-        try:
-            for root, _, files in os.walk(directory, topdown=True):
-                for f in files:
-                    try:
-                        fp = Path(root) / f
-                        total += fp.stat().st_size
-                    except OSError, PermissionError:
-                        pass
-        except OSError, PermissionError:
-            pass
-        return total
-
-
-class SortFilterProxyModel(QSortFilterProxyModel):
-    @override
-    def lessThan(
-        self,
-        source_left: QModelIndex | QPersistentModelIndex,
-        source_right: QModelIndex | QPersistentModelIndex,
-        /,
-    ) -> bool:
-        # Special handling for the Size column (column 2)
-        if source_left.column() == 2:
-            left_data = self.sourceModel().data(source_left, Qt.ItemDataRole.UserRole)
-            right_data = self.sourceModel().data(source_right, Qt.ItemDataRole.UserRole)
-            if left_data is not None and right_data is not None:
-                return left_data < right_data
-        # Default string comparison for other columns
-        return super().lessThan(source_left, source_right)
-
-
-class DeleteWorker(QThread):
-    progress = Signal(int)
-    # pyrefly: ignore [missing-override-decorator]
-    finished = Signal()
-
-    def __init__(self, paths: list[Path]) -> None:
-        super().__init__()
-        self.paths = paths
-
-    @override
-    def run(self) -> None:
-        for idx, p in enumerate(self.paths, 1):
-            try:
-                shutil.rmtree(p, ignore_errors=True)
-            except Exception:
-                pass
-            self.progress.emit(idx)
-        self.finished.emit()
+from workers import DeleteWorker, ScanWorker
 
 
 class MainWindow(QMainWindow):
@@ -393,42 +280,6 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Done", "Selected folders have been deleted.")
         # Auto re-scan
         self.start_scan()
-
-
-# ----------------- Admin rights on Windows ------------------------------
-
-
-def is_admin():
-    try:
-        return ctypes.windll.shell32.IsUserAnAdmin()
-    except Exception:
-        return False
-
-
-def ask_elevation() -> None:
-    ctypes.windll.shell32.ShellExecuteW(
-        None, "runas", sys.executable, " ".join(sys.argv), None, 1
-    )
-    sys.exit(0)
-
-
-def show_admin_error() -> None:
-    """Show admin error with fallback methods"""
-    # Try to create QApplication first if it doesn't exist
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication(sys.argv)
-
-    # Create message box
-    msg = QMessageBox()
-    msg.setWindowTitle("Administrator Required")
-    msg.setIcon(QMessageBox.Icon.Critical)
-    msg.setText(
-        "This application requires Administrator privileges to clean AppData folders."
-    )
-    msg.setInformativeText("Please run as Administrator and try again.")
-    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-    msg.exec()
 
 
 if __name__ == "__main__":

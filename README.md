@@ -19,6 +19,6 @@ Download the latest release from: https://github.com/Hermesiss/appdata-cleaner/r
 
 For python devs:
 
-1. run `uv run appdata_cleaner.py`
+1. run `uv run app.py`
 
 ⚠️ **Warning**: This tool permanently deletes folders. Use with caution.
