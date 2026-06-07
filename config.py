@@ -9,3 +9,4 @@ class Settings:
     KEYWORDS = Config(
         Set({"cache", "temp", "crash", "report", "dump", "crashes", "pending"})
     )
+    MAX_DEPTH = Config(3)
