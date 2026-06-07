@@ -9,8 +9,8 @@ from pathlib import Path
 from threading import Event
 from humanize import naturalsize  # pip install humanize
 
-from PySide6.QtCore import Qt, QThread, Signal, QModelIndex, QSortFilterProxyModel
-from PySide6.QtGui import QAction, QStandardItem, QStandardItemModel
+from PySide6.QtCore import Qt, QThread, Signal, QSortFilterProxyModel
+from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import QHeaderView
 from PySide6.QtWidgets import (
     QApplication,
@@ -36,16 +36,16 @@ class ScanWorker(QThread):
     folder_found = Signal(str, str, str)  # path, size_human, size_bytes_str
     finished = Signal(int)  # total count
 
-    def __init__(self, base_paths, max_depth):
+    def __init__(self, base_paths, max_depth) -> None:
         super().__init__()
         self.base_paths = base_paths
         self.max_depth = max_depth
         self._stop_event = Event()
 
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
 
-    def run(self):
+    def run(self) -> None:
         self.results_count = 0
         for base in self.base_paths:
             if self._stop_event.is_set():
@@ -53,7 +53,7 @@ class ScanWorker(QThread):
             self._scan_path(Path(base), 0)
         self.finished.emit(self.results_count)
 
-    def _scan_path(self, path: Path, depth: int):
+    def _scan_path(self, path: Path, depth: int) -> None:
         if (self.max_depth > 0 and depth > self.max_depth) or self._stop_event.is_set():
             return
         try:
@@ -109,11 +109,11 @@ class DeleteWorker(QThread):
     progress = Signal(int)
     finished = Signal()
 
-    def __init__(self, paths):
+    def __init__(self, paths) -> None:
         super().__init__()
         self.paths = paths
 
-    def run(self):
+    def run(self) -> None:
         for idx, p in enumerate(self.paths, 1):
             try:
                 shutil.rmtree(p, ignore_errors=True)
@@ -124,7 +124,7 @@ class DeleteWorker(QThread):
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("AppData Cleaner")
         self.resize(900, 600)
@@ -155,11 +155,11 @@ class MainWindow(QMainWindow):
         self.table = QTableView()
         self.source_model = QStandardItemModel(0, 3)
         self.source_model.setHorizontalHeaderLabels(["✔", "Path", "Size"])
-        
+
         # Setup proxy model for sorting
         self.proxy_model = SortFilterProxyModel()
         self.proxy_model.setSourceModel(self.source_model)
-        
+
         self.table.setModel(self.proxy_model)
         self.table.setSortingEnabled(True)
         self.table.setColumnWidth(0, 40)
@@ -167,7 +167,7 @@ class MainWindow(QMainWindow):
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)  # Path column
         self.table.setSelectionBehavior(QTableView.SelectRows)
-        
+
         # Sort by size (column 2) in descending order by default
         self.table.sortByColumn(2, Qt.DescendingOrder)
 
@@ -210,14 +210,14 @@ class MainWindow(QMainWindow):
 
         # No initial scan - user will click button when ready
 
-    def update_depth_label(self, value):
+    def update_depth_label(self, value) -> None:
         if value == 0:
             self.depth_label.setText("Depth: ∞")
         else:
             self.depth_label.setText(f"Depth: {value}")
 
     # ---------- Scanning --------------------------------------------------
-    def start_scan(self):
+    def start_scan(self) -> None:
         if self.scan_worker and self.scan_worker.isRunning():
             return
         self.source_model.removeRows(0, self.source_model.rowCount())
@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
         self.scan_worker.finished.connect(self.scan_finished)
         self.scan_worker.start()
 
-    def add_folder_to_table(self, path, size_human, size_bytes_str):
+    def add_folder_to_table(self, path, size_human, size_bytes_str) -> None:
         checkbox_item = QStandardItem()
         checkbox_item.setCheckable(True)
         checkbox_item.setEditable(False)
@@ -254,7 +254,7 @@ class MainWindow(QMainWindow):
         self.source_model.appendRow([checkbox_item, path_item, size_item])
         self.update_totals()
 
-    def scan_finished(self, total_count):
+    def scan_finished(self, total_count) -> None:
         self.status_label.setText(f"Scan completed. Found {total_count} folders")
         self.scan_btn.setEnabled(True)  # Re-enable scan button
         self.select_all_btn.setEnabled(True)  # Re-enable selection buttons
@@ -264,19 +264,19 @@ class MainWindow(QMainWindow):
         self.update_totals()  # Final update to enable delete button if something selected
 
     # ---------- Selection -------------------------------------------------
-    def select_all(self):
+    def select_all(self) -> None:
         for row in range(self.source_model.rowCount()):
             self.source_model.item(row, 0).setCheckState(Qt.Checked)
 
-    def deselect_all(self):
+    def deselect_all(self) -> None:
         for row in range(self.source_model.rowCount()):
             self.source_model.item(row, 0).setCheckState(Qt.Unchecked)
 
-    def update_totals(self, *_):
+    def update_totals(self, *_) -> None:
         total_found = 0
         total_selected = 0
         selected_count = 0
-        
+
         for row in range(self.source_model.rowCount()):
             size_item = self.source_model.item(row, 2)
             # Get the raw size in bytes from UserRole data
@@ -284,15 +284,15 @@ class MainWindow(QMainWindow):
             if size_bytes is None:
                 # Fallback to parsing the displayed text if no UserRole data
                 size_bytes = self._parse_size(size_item.text())
-            
+
             total_found += size_bytes
             if self.source_model.item(row, 0).checkState() == Qt.Checked:
                 total_selected += size_bytes
                 selected_count += 1
-        
+
         found_h = naturalsize(total_found, binary=True)
         selected_h = naturalsize(total_selected, binary=True)
-        
+
         # Update status
         row_count = self.source_model.rowCount()
         if row_count > 0:
@@ -301,18 +301,18 @@ class MainWindow(QMainWindow):
         else:
             self.status_label.setText("Ready")
             self.size_info_label.setText("")
-        
+
         # Enable delete button if something is selected
         self.delete_btn.setEnabled(total_selected > 0 and selected_count > 0)
 
-    def _parse_size(self, human):
+    def _parse_size(self, human: str) -> int:
         try:
             multipliers = {
-                "B": 1, 
+                "B": 1,
                 "Bytes": 1,
-                "KiB": 1024, 
-                "MiB": 1024**2, 
-                "GiB": 1024**3, 
+                "KiB": 1024,
+                "MiB": 1024**2,
+                "GiB": 1024**3,
                 "TiB": 1024**4,
                 "kB": 1000,
                 "MB": 1000**2,
@@ -328,7 +328,7 @@ class MainWindow(QMainWindow):
             return 0
 
     # ---------- Deleting --------------------------------------------------
-    def start_delete(self):
+    def start_delete(self) -> None:
         paths_to_delete = []
         for row in range(self.source_model.rowCount()):
             if self.source_model.item(row, 0).checkState() == Qt.Checked:
@@ -341,9 +341,9 @@ class MainWindow(QMainWindow):
             self,
             "Confirm Deletion",
             f"This will permanently delete {len(paths_to_delete)} folders. Continue?",
-            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
-        if reply != QMessageBox.Yes:
+        if reply != QMessageBox.StandardButton.Yes:
             return
 
         self.delete_btn.setEnabled(False)
@@ -356,7 +356,7 @@ class MainWindow(QMainWindow):
         self.delete_worker.finished.connect(self.deletion_finished)
         self.delete_worker.start()
 
-    def deletion_finished(self):
+    def deletion_finished(self) -> None:
         QMessageBox.information(self, "Done", "Selected folders have been deleted.")
         # Auto re-scan
         self.start_scan()
@@ -370,35 +370,35 @@ def is_admin():
     except Exception:
         return False
 
-def show_admin_error():
+def show_admin_error() -> None:
     """Show admin error with fallback methods"""
     # Try to create QApplication first if it doesn't exist
     app = QApplication.instance()
     if app is None:
         app = QApplication(sys.argv)
-    
+
     # Create message box
     msg = QMessageBox()
     msg.setWindowTitle("Administrator Required")
-    msg.setIcon(QMessageBox.Critical)
+    msg.setIcon(QMessageBox.Icon.Critical)
     msg.setText("This application requires Administrator privileges to clean AppData folders.")
     msg.setInformativeText("Please run as Administrator and try again.")
-    msg.setStandardButtons(QMessageBox.Ok)
+    msg.setStandardButtons(QMessageBox.StandardButton.Ok)
     msg.exec()
 
 if __name__ == "__main__":
     # Debug info for admin check
     admin_status = is_admin()
-    
+
     # Debug mode - show admin status (remove this after testing)
     debug_mode = "--debug" in sys.argv
     if debug_mode:
         app = QApplication(sys.argv)
-        QMessageBox.information(None, "Debug Info", 
+        QMessageBox.information(None, "Debug Info",
                                f"Platform: {sys.platform}\n"
                                f"Admin Status: {admin_status}\n"
                                f"Will show admin error: {sys.platform.startswith('win') and not admin_status}")
-    
+
     if sys.platform.startswith("win") and not admin_status:
         show_admin_error()
         sys.exit(1)

@@ -4,6 +4,8 @@ Build script for AppData Cleaner
 Builds the application into a standalone executable using PyInstaller
 """
 
+from subprocess import CompletedProcess
+from subprocess import CalledProcessError
 import os
 import sys
 import shutil
@@ -11,7 +13,7 @@ import subprocess
 from pathlib import Path
 
 
-def run_command(cmd, check=True):
+def run_command(cmd: str, check=True) -> CalledProcessError | CompletedProcess[str]:
     """Run a command and return the result"""
     print(f"Running: {cmd}")
     try:
@@ -28,7 +30,7 @@ def run_command(cmd, check=True):
         return e
 
 
-def check_pyinstaller():
+def check_pyinstaller() -> None:
     """Check if PyInstaller is installed, install if not"""
     print("Checking PyInstaller...")
     result = run_command("pip show pyinstaller", check=False)
@@ -39,27 +41,27 @@ def check_pyinstaller():
         print("PyInstaller is already installed.")
 
 
-def clean_build_dirs():
+def clean_build_dirs() -> None:
     """Clean previous build directories"""
     print("Cleaning previous build files...")
     dirs_to_clean = ["dist", "build"]
     files_to_clean = ["*.spec"]
-    
+
     for dir_name in dirs_to_clean:
         if os.path.exists(dir_name):
             shutil.rmtree(dir_name)
             print(f"Removed {dir_name}/")
-    
+
     for pattern in files_to_clean:
         for file_path in Path(".").glob(pattern):
             file_path.unlink()
             print(f"Removed {file_path}")
 
 
-def build_executable():
+def build_executable() -> bool:
     """Build the executable using PyInstaller"""
     print("Building executable...")
-    
+
     # Basic PyInstaller command
     cmd_parts = [
         "pyinstaller",
@@ -68,26 +70,26 @@ def build_executable():
         "--name AppDataCleaner",  # Executable name
         "--clean",             # Clean cache
     ]
-    
+
     # Add icon if exists
     if os.path.exists("icon.ico"):
         cmd_parts.append("--icon=icon.ico")
-    
+
     # Add version info if exists
     if os.path.exists("version_info.txt"):
         cmd_parts.append("--version-file=version_info.txt")
-    
+
     # Hidden imports for PySide6
     hidden_imports = [
         "PySide6.QtCore",
-        "PySide6.QtGui", 
+        "PySide6.QtGui",
         "PySide6.QtWidgets",
         "humanize"
     ]
-    
+
     for imp in hidden_imports:
         cmd_parts.append(f"--hidden-import={imp}")
-    
+
     # Exclude unnecessary modules to reduce size
     excludes = [
         "tkinter",
@@ -96,49 +98,49 @@ def build_executable():
         "scipy",
         "pandas"
     ]
-    
+
     for exc in excludes:
         cmd_parts.append(f"--exclude-module={exc}")
-    
+
     # Add the main script
     cmd_parts.append("appdata_cleaner.py")
-    
+
     # Build command
     cmd = " ".join(cmd_parts)
     result = run_command(cmd)
-    
+
     return result.returncode == 0
 
 
-def main():
+def main() -> None:
     """Main build function"""
     print("=" * 50)
     print("AppData Cleaner Build Script")
     print("=" * 50)
-    
+
     # Check if we're in the right directory
     if not os.path.exists("appdata_cleaner.py"):
         print("Error: appdata_cleaner.py not found!")
         print("Please run this script from the project root directory.")
         sys.exit(1)
-    
+
     try:
         # Check and install PyInstaller
         check_pyinstaller()
-        
+
         # Clean previous builds
         clean_build_dirs()
-        
+
         # Build the executable
         success = build_executable()
-        
+
         if success and os.path.exists("dist/AppDataCleaner.exe"):
             print("\n" + "=" * 50)
             print("✅ Build completed successfully!")
             print(f"📁 Executable: {os.path.abspath('dist/AppDataCleaner.exe')}")
             print(f"📦 Size: {os.path.getsize('dist/AppDataCleaner.exe') / (1024*1024):.1f} MB")
             print("=" * 50)
-            
+
             # Optional: Open dist folder
             if sys.platform == "win32":
                 os.startfile("dist")
@@ -148,7 +150,7 @@ def main():
             print("Check the output above for errors.")
             print("=" * 50)
             sys.exit(1)
-            
+
     except KeyboardInterrupt:
         print("\n🛑 Build cancelled by user.")
         sys.exit(1)
@@ -158,4 +160,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()
