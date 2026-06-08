@@ -1,10 +1,12 @@
 from __future__ import annotations
+from collections.abc import Generator
+import contextlib
 import sys
 from admin import is_admin, ask_elevation
 from filters import SortFilterProxyModel
 
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QAbstractItemModel
 from PySide6.QtGui import QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QLabel,
@@ -34,6 +36,7 @@ from ui import (
 )
 from utils import parse_size
 from workers import DeleteWorker, ScanWorker
+from config import Settings
 
 
 def start_scan(main: MainWindow) -> None:
@@ -74,9 +77,47 @@ def start_scan(main: MainWindow) -> None:
     main.scan_worker.start()
 
 
+@contextlib.contextmanager
+def no_render(view: QWidget) -> Any:
+    """Context manager to temporarily disable UI updates for a given view."""
+    view.setUpdatesEnabled(False)
+    try:
+        yield
+    finally:
+        view.setUpdatesEnabled(True)
+
+
+@contextlib.contextmanager
+def block_signals(model: QAbstractItemModel) -> Any:
+    """Context manager to temporarily block signals for a given model."""
+    model.layoutAboutToBeChanged.emit()
+    model.blockSignals(True)
+    try:
+        yield
+    finally:
+        model.blockSignals(False)
+        model.layoutChanged.emit()
+
+
+@contextlib.contextmanager
+def bulk_model_update(
+    view: QWidget | None = None, model: QAbstractItemModel | None = None
+) -> Generator[None, None, None]:
+    """
+    Context manager to maximize performance during mass data operations.
+    Silences data model signals and freezes view rendering until finished.
+    """
+    with (
+        no_render(view) if view else contextlib.nullcontext(),
+        block_signals(model) if model else contextlib.nullcontext(),
+    ):
+        yield
+
+
 def set_state_all(main: MainWindow, state: Qt.CheckState) -> None:
-    for row in range(main.source_model.rowCount()):
-        main.source_model.item(row, 0).setCheckState(state)
+    with bulk_model_update(view=main, model=main.source_model):
+        for row in range(main.source_model.rowCount()):
+            main.source_model.item(row, 0).setCheckState(state)
 
 
 def select_all(main: MainWindow) -> None:
@@ -216,6 +257,8 @@ class MainWindow(QMainWindow):
 
         self.scan_worker: ScanWorker | None = None
         self.delete_worker: DeleteWorker | None = None
+        if Settings.AUTO_SCAN:
+            self.start_scan()
 
     def add_main_layout(
         self, top_layout: TopLayout, bottom_layout: BottomLayout
@@ -244,8 +287,6 @@ class MainWindow(QMainWindow):
         bottom_layout.addWidget(self.size_info_label)
         bottom_layout.addWidget(self.delete_btn)
         return bottom_layout
-
-        # No initial scan - user will click button when ready
 
     def update_depth_label(self, value: int) -> None:
         if value == 0:
