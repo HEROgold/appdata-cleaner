@@ -203,3 +203,4 @@ __marimo__/
 # Extras
 .skylos/
 .vscode/
+config.ini
