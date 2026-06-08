@@ -1,4 +1,6 @@
 from __future__ import annotations
+from argparse import Namespace
+from herogold.argparse import Argument, entrypoint
 from collections.abc import Generator
 import contextlib
 import sys
@@ -329,13 +331,22 @@ class MainWindow(QMainWindow):
         self.start_scan()
 
 
-if __name__ == "__main__":
-    # Debug info for admin check
+class Args(Namespace):
+    debug = Argument(
+        "--debug",
+        "-d",
+        type_=bool,
+        default=False,
+        help="Show debug information in message boxes (for testing purposes)",
+    )
+
+
+@entrypoint(Args)
+def main(args: Args) -> None:
     admin_status = is_admin()
 
     # Debug mode - show admin status (remove this after testing)
-    debug_mode = "--debug" in sys.argv
-    if debug_mode:
+    if args.debug:
         app = QApplication(sys.argv)
         QMessageBox.information(
             None,
@@ -352,3 +363,7 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    main()
