@@ -10,3 +10,4 @@ class Settings:
         Set({"cache", "temp", "crash", "report", "dump", "crashes", "pending"})
     )
     MAX_DEPTH = Config(3)
+    AUTO_SCAN = Config(True)
