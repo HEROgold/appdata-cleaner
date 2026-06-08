@@ -102,6 +102,8 @@ class ScanWorker(QThread):
 
 def is_match(path: Path) -> bool:
     """Helper to check if a path's name matches our filter keywords."""
+    if path in Settings.EXCLUDE:
+        return False
     name_lower = path.name.casefold()
     return any(keyword in name_lower for keyword in Settings.KEYWORDS)
 

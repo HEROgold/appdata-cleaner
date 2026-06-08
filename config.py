@@ -11,3 +11,12 @@ class Settings:
     )
     MAX_DEPTH = Config(3)
     AUTO_SCAN = Config(True)
+    EXCLUDE = Config(
+        Set(
+            {
+                Path("C:/Windows"),
+                Path("C:/Program Files"),
+                Path("C:/Program Files (x86)"),
+            }
+        )
+    )

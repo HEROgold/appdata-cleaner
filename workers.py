@@ -67,6 +67,9 @@ class ScanWorker(QThread):
 def filter_results(results: set[Path]) -> Generator[Path, None, None]:
     """Filters the scanned results for folders matching the keywords."""
     for i in results:
+        if i in Settings.EXCLUDE:
+            print("Excluded:", i)
+            continue
         if any(keyword in i.name.casefold() for keyword in Settings.KEYWORDS):
             yield i
 
